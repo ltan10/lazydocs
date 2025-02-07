@@ -427,6 +427,10 @@ def _doc2md(obj: Any) -> str:
                     + _RE_TYPED_ARGSTART.sub(r"<b>`\1`</b> (\2): \3", line)
                 )
                 argindent = indent
+            elif indent > argindent:
+                # attach docs text of argument
+                # * (blockindent + 2)
+                out.append(" " + line)
             elif arg_list and not literal_block and _RE_ARGSTART.match(line):
                 # start of an exception-type block
                 out.append(
@@ -436,10 +440,6 @@ def _doc2md(obj: Any) -> str:
                     + _RE_ARGSTART.sub(r"<b>`\1`</b>: \2", line)
                 )
                 argindent = indent
-            elif indent > argindent:
-                # attach docs text of argument
-                # * (blockindent + 2)
-                out.append(" " + line)
             else:
                 out.append(line)
         else:
