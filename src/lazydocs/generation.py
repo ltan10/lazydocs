@@ -836,9 +836,6 @@ class MarkdownGenerator(object):
             )
         elif is_dataclass(cls):
             kind = "dataclass"
-            variables.append(
-                "%s <kbd>attributes</kbd>\n" % (sectionheader)
-            )
         elif issubclass(cls, Exception):
             kind = "exception"
         else:
@@ -887,10 +884,16 @@ class MarkdownGenerator(object):
                     variables.append(
                         "- **%s** = %s\n" % (full_name, obj.value)
                     )
-            elif name == "__dataclass_fields__":
+            elif name == "__dataclass_fields__" and obj:
+                variables.append(
+                    "%s <kbd>fields</kbd>\n" % (sectionheader)
+                )
                 for name, field in sorted((obj).items()):
+                    full_name = f"{clsname}.{name}"
+                    if self.remove_package_prefix:
+                        full_name = name
                     variables.append(
-                        "- ```%s``` (%s)\n" % (name,
+                        "- ```%s``` (%s)\n" % (full_name,
                                                field.type.__name__)
                     )
 
