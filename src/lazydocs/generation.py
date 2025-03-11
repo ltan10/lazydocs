@@ -1143,24 +1143,31 @@ class MarkdownGenerator(object):
             modules=modules_md, classes=classes_md, functions=functions_md
         )
 
-    def toc2md(self, module: types.ModuleType = None, is_mdx: bool = False) -> str:
-        """Generates table of contents for imported object."""
+    def toc2md(self, module: types.ModuleType, is_mdx: bool = False) -> str:
+        """Generates table of contents for imported object.
+
+        Args:
+            module (ModuleType): Parsed module object for TOC generation.
+            is_mdx (bool, optional): JSX support. Default to False.
+
+        Returns:
+            str: Markdown documentation of TOC file if TOC exist.
+        """
         toc = []
         for obj in self.generated_objects:
             if module and (module.__name__ != obj["module"] or obj["type"] == "module"):
                 continue
-            # module_name = obj["module"].split(".")[-1]
             full_name = obj["full_name"]
             name = obj["name"]
-            if is_mdx:
-                link = "./" + obj["module"] + ".mdx#" + obj["anchor_tag"]
-            else:
-                link = "./" + obj["module"] + ".md#" + obj["anchor_tag"]
-            line = f"- [`{name}`]({link})"
+            summary = obj["description"]
+            link = f"./{obj['module']}.md{'x' if is_mdx else ''}#{obj['anchor_tag']}"
+            line = f"- [`{name}`]({link}){': ' if summary else ''}{summary}"
             depth = max(len(full_name.split(".")) - 1, 0)
             if depth:
                 line = "\t" * depth + line
             toc.append(line)
+        if not toc:
+            return ""
         return _TOC_TEMPLATE.format(toc="\n".join(toc))
 
 
@@ -1193,6 +1200,7 @@ def generate_docs(
         watermark: If `True`, add a watermark with a timestamp to bottom of the markdown files.
         validate: If `True`, validate the docstrings via pydocstyle. Requires pydocstyle to be installed.
         private_modules: If `True`, includes modules with `_` prefix.
+        include_toc: Include table of contents in module file. Defaults to False.
         url_line_prefix: Line prefix for git repository line url anchors. Default: None - github "L".
     """
     stdout_mode = output_path.lower() == "stdout"
@@ -1369,7 +1377,7 @@ def generate_docs(
                                 + repr(ex)
                             )
                 else:
-                    import_md = generator.import2md(obj, is_mdx=is_mdx)
+                    import_md = generator.import2md(obj, is_mdx=is_mdx, include_toc=include_toc)
                     if stdout_mode:
                         print(import_md)
                     else:
