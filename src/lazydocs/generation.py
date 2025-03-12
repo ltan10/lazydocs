@@ -410,7 +410,7 @@ def _doc2md(obj: Any) -> str:
         indent: int
         offset: int
 
-    def _get_section_offset(lines: list, start_index: int, blockindent: int):
+    def _get_section_offset(lines: list, start_index: int, blockindent: int) -> int:
         """Determine base padding offset for section.
 
         Args:
@@ -421,7 +421,7 @@ def _doc2md(obj: Any) -> str:
         Returns:
             int: Padding offset.
         """
-        offset = []
+        offset: List[int] = []
         try:
             for line in lines[start_index:]:
                 indent = len(line) - len(line.lstrip())
@@ -436,9 +436,9 @@ def _doc2md(obj: Any) -> str:
         return -min(offset) if offset else 0
 
     def _lines_isvalid(lines: list, start_index: int, blockindent: int,
-                            allow_same_level: bool = False,
-                            require_next_is_blank: bool = False,
-                            max_blank: int = None):
+                       allow_same_level: bool = False,
+                       require_next_is_blank: bool = False,
+                       max_blank: Optional[int] = None) -> bool:
         """Determine following lines fit section rules.
 
         Args:
@@ -517,11 +517,11 @@ def _doc2md(obj: Any) -> str:
                 line = line + "\n```"
         elif doctest_block and \
                 not _lines_isvalid(docstring, line_indx + 1, doctest_block.indent,
-                                      True, False, 1):
+                                   True, False, 1):
             # Doctest block Exit Condition
             offset = doctest_block.indent - indent
-            line = " " * (indent - doctest_block.indent +
-                          doctest_block.offset) + line + "\n```"
+            line = " " * (indent - doctest_block.indent
+                          + doctest_block.offset) + line + "\n```"
             block_exit = True
         elif line.endswith("::") and not (literal_block) and \
                 _lines_isvalid(docstring, line_indx + 1, indent, False, True, None):
@@ -538,11 +538,11 @@ def _doc2md(obj: Any) -> str:
                 line = "```" + line
                 indent = literal_block.indent
             elif not _lines_isvalid(docstring, line_indx + 1, literal_block.indent,
-                                       False, False, None):
+                                    False, False, None):
                 # Literal block exit condition
                 offset += literal_block.indent - indent
-                line = " " * (indent - literal_block.indent +
-                              literal_block.offset) + line + "\n```"
+                line = " " * (indent - literal_block.indent
+                              + literal_block.offset) + line + "\n```"
                 block_exit = True
             elif line:
                 offset += literal_block.offset
@@ -561,7 +561,7 @@ def _doc2md(obj: Any) -> str:
             offset = admonition_block.indent - indent
             line = "> {}".format(line.replace("\n", "\n> "))
             if not _lines_isvalid(docstring, line_indx + 1, admonition_block.indent,
-                                     False, False, None):
+                                  False, False, None):
                 admonition_block = None
 
         if (blockstart_result or blocktext_result):
@@ -629,6 +629,7 @@ def _doc2md(obj: Any) -> str:
         else:
             prev_blank_line_count += 1
     return "".join(out)
+
 
 class MarkdownGenerator(object):
     """Markdown generator class."""
@@ -1406,5 +1407,5 @@ def generate_docs(
         # Write mkdocs pages file
         print("Writing mkdocs .pages file.")
         # TODO: generate navigation items to fix problem with naming
-        with open(os.path.join(output_path, ".pages"),  "w", encoding="utf-8", newline="\n") as f:
+        with open(os.path.join(output_path, ".pages"), "w", encoding="utf-8", newline="\n") as f:
             f.write(_MKDOCS_PAGES_TEMPLATE.format(overview_file=overview_file))
