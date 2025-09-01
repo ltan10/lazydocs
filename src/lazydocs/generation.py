@@ -574,14 +574,20 @@ def _doc2md(obj: Any) -> str:
                 out.append("\n")
             out.append("**{}**\n".format(line.strip()))
         elif indent > blockindent and (arg_list or section_block):
-            if arg_list and not literal_block and _RE_TYPED_ARGSTART.match(line):
+            if all([arg_list,
+                   not literal_block,
+                   (indent <= argindent if argindent else indent),
+                   _RE_TYPED_ARGSTART.match(line)]):
                 # start of new argument
                 out.append(
                     "- "
                     + _RE_TYPED_ARGSTART.sub(r"<b>`\1`</b> (\2): \3", line)
                 )
                 argindent = indent
-            elif arg_list and not literal_block and _RE_ARGSTART.match(line):
+            elif all([arg_list,
+                     not literal_block,
+                     (indent <= argindent if argindent else indent),
+                     _RE_ARGSTART.match(line)]):
                 # start of an exception-type block
                 out.append(
                     "- "
