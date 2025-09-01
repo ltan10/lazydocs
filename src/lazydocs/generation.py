@@ -8,10 +8,12 @@ import os
 import pkgutil
 import re
 import subprocess
+import sys
 import types
 from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from pydoc import locate
+from types import ModuleType
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import quote
 
@@ -1240,9 +1242,11 @@ def generate_docs(
     """
     stdout_mode = output_path.lower() == "stdout"
 
-    if not stdout_mode and not os.path.exists(output_path):
-        # Create output path
-        os.makedirs(output_path)
+    if not stdout_mode:
+        print(f"Output Location: {output_path}")
+        if not os.path.exists(output_path):
+            # Create output path
+            os.makedirs(output_path)
 
     if not ignored_modules:
         ignored_modules = list()
@@ -1290,21 +1294,50 @@ def generate_docs(
             if not stdout_mode:
                 print(f"Generating docs for python package at: {path}")
 
+            path_abs = os.path.abspath(path)
+
+            # Work around for relative imports in top level modules
+            # requires adding parent directory as base package to sys modules namespace
+            parent_package = os.path.basename(path)
+            mod = ModuleType(parent_package)
+            mod.__path__ = [path_abs]
+            mod.__package__ = parent_package
+            if parent_package not in sys.modules:
+                sys.modules[parent_package] = mod  # Add module to current namespace
+
             # Generate one file for every discovered module
-            for loader, module_name, _ in pkgutil.walk_packages([path]):
+            for loader, module_name, is_pkg in pkgutil.walk_packages([path_abs]):
                 if _is_module_ignored(module_name, ignored_modules, private_modules):
                     # Add module to ignore list, so submodule will also be ignored
                     ignored_modules.append(module_name)
                     continue
+
                 try:
+                    # Modern PEP 451 path
                     try:
-                        mod_spec = importlib.util.spec_from_loader(module_name, loader)
-                        mod = importlib.util.module_from_spec(mod_spec)
-                        mod_spec.loader.exec_module(mod)
+                        mod_spec = loader.find_spec(module_name)
                     except AttributeError:
-                        # For older python version compatibility
-                        mod = loader.find_module(module_name).load_module(module_name)  # type: ignore
-                    module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
+                        # Fallback if Loader object has no attribute `find_spec`
+                        module_filepath = os.path.join(
+                            path_abs, *module_name.split(".")) + ".py"
+                        mod_spec = importlib.util.spec_from_file_location(
+                            module_name,
+                            os.path.join(loader.path, module_filepath)
+                        )
+                    if mod_spec is None or mod_spec.loader is None:
+                        raise ImportError(f"Cannot load module {module_name} from {path}")
+                    mod = importlib.util.module_from_spec(mod_spec)
+                    full_module_name = f"{parent_package}.{module_name}"
+                    mod.__package__ = (module_name if is_pkg
+                                       else full_module_name).rsplit(".", 1)[0]
+                    # Add module to current namespace
+                    if mod.__name__ not in sys.modules:
+                        sys.modules[mod.__name__] = mod
+                    mod_spec.loader.exec_module(mod)
+
+                    module_md = generator.module2md(module=mod,
+                                                    is_mdx=is_mdx,
+                                                    include_toc=include_toc)
                     if not module_md:
                         # Module md is empty -> ignore module and all submodules
                         # Add module to ignore list, so submodule will also be ignored
@@ -1315,8 +1348,8 @@ def generate_docs(
                         print(module_md)
                     else:
                         to_md_file(
-                            module_md,
-                            mod.__name__,
+                            markdown_str=module_md,
+                            filename=mod.__name__,
                             out_path=output_path,
                             watermark=watermark,
                             is_mdx=is_mdx,
@@ -1330,26 +1363,34 @@ def generate_docs(
                 raise Exception(f"Validation for {path} failed.")
 
             if not stdout_mode:
-                print(f"Generating docs for python module at: {path}")
+                print(f"Generating docs for python module: {path}")
 
-            module_name = os.path.basename(path)
+            path_abs = os.path.abspath(path)
+            src_dir, filename = os.path.split(path_abs)
+            # TODO: Possible new feature?? Dynamically locating package root to define full dotted module name and package
+            module_name, _ = os.path.splitext(filename)
+            parent_package = os.path.basename(src_dir)
 
-            spec = importlib.util.spec_from_file_location(
-                module_name,
-                path,
-            )
-            assert spec is not None
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)  # type: ignore
+            mod_spec = importlib.util.spec_from_file_location(module_name, path_abs)
+            if mod_spec is None or mod_spec.loader is None:
+                raise ImportError(f"Cannot load module {module_name} from {path}")
+            mod = importlib.util.module_from_spec(mod_spec)
+            # Define parent directory as package to support relative imports
+            mod.__package__ = parent_package
+            if mod.__name__ not in sys.modules:
+                sys.modules[mod.__name__] = mod  # Add module to current namespace
+            mod_spec.loader.exec_module(mod)  # type: ignore
 
             if mod:
-                module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
+                module_md = generator.module2md(module=mod,
+                                                is_mdx=is_mdx,
+                                                include_toc=include_toc)
                 if stdout_mode:
                     print(module_md)
                 else:
                     to_md_file(
-                        module_md,
-                        module_name,
+                        markdown_str=module_md,
+                        filename=mod.__name__,
                         out_path=output_path,
                         watermark=watermark,
                         is_mdx=is_mdx,
@@ -1375,20 +1416,26 @@ def generate_docs(
                         path=obj.__path__,  # type: ignore
                         prefix=obj.__name__ + ".",  # type: ignore
                     ):
+                        # Add module to ignore list, so submodule will also be ignored
                         if _is_module_ignored(module_name, ignored_modules, private_modules):
-                            # Add module to ignore list, so submodule will also be ignored
-                            ignored_modules.append(module_name)
+                            ignored_modules.add(module_name)
                             continue
 
                         try:
-                            try:
-                                mod_spec = importlib.util.spec_from_loader(module_name, loader)
-                                mod = importlib.util.module_from_spec(mod_spec)
-                                mod_spec.loader.exec_module(mod)
-                            except AttributeError:
-                                # For older python version compatibility
-                                mod = loader.find_module(module_name).load_module(module_name)  # type: ignore
-                            module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
+                            # Modern PEP 451 path
+                            # mod = importlib.import_module(module_name)
+                            mod_spec = importlib.util.find_spec(module_name)
+                            if mod_spec is None or mod_spec.loader is None:
+                                raise ImportError(f"Cannot load module {module_name} from {loader.path}")
+                            mod = importlib.util.module_from_spec(mod_spec)
+                            # Add module to current namespace
+                            if mod.__name__ not in sys.modules:
+                                sys.modules[mod.__name__] = mod
+                            mod_spec.loader.exec_module(mod)
+
+                            module_md = generator.module2md(module=mod,
+                                                            is_mdx=is_mdx,
+                                                            include_toc=include_toc)
 
                             if not module_md:
                                 # Module MD is empty -> ignore module and all submodules
@@ -1400,8 +1447,8 @@ def generate_docs(
                                 print(module_md)
                             else:
                                 to_md_file(
-                                    module_md,
-                                    mod.__name__,
+                                    markdown_str=module_md,
+                                    filename=mod.__name__,
                                     out_path=output_path,
                                     watermark=watermark,
                                     is_mdx=is_mdx
@@ -1417,10 +1464,14 @@ def generate_docs(
                         print(import_md)
                     else:
                         to_md_file(
-                            import_md, path, out_path=output_path, watermark=watermark, is_mdx=is_mdx
+                            markdown_str=import_md,
+                            filename=path,
+                            out_path=output_path,
+                            watermark=watermark,
+                            is_mdx=is_mdx
                         )
             else:
-                raise Exception(f"Failed to generate markdown for {path}.")
+                raise Exception(f"Failed to generate markdown. Path `{path}` not recognized.")
 
     if overview_file and not stdout_mode:
         if is_mdx:
