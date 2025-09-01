@@ -8,6 +8,7 @@ import os
 import pkgutil
 import re
 import subprocess
+import sys
 import types
 from dataclasses import dataclass, is_dataclass
 from enum import Enum
@@ -1264,25 +1265,41 @@ def generate_docs(
 
     for path in paths:  # lgtm [py/non-iterable-in-for-loop]
         if os.path.isdir(path):
+            path = os.path.abspath(path)
             if validate and subprocess.call(f"{pydocstyle_cmd} {path}", shell=True) > 0:
                 raise Exception(f"Validation for {path} failed.")
 
             if not stdout_mode:
                 print(f"Generating docs for python package at: {path}")
 
+            # Work around for relative imports in top level modules
+            # requires adding parent directory to sys path for parent package resolution
+            parent_dir, basename = os.path.split(path)
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
+
             # Generate one file for every discovered module
-            for loader, module_name, _ in pkgutil.walk_packages([path]):
+            for loader, module_name, _ in pkgutil.walk_packages([path],
+                                                                # prefix=f"{basename}."
+                                                                ):
                 if _is_module_ignored(module_name, ignored_modules, private_modules):
                     # Add module to ignore list, so submodule will also be ignored
                     ignored_modules.append(module_name)
                     continue
+                full_module_name = f"{basename}.{module_name}"
                 try:
                     try:
-                        mod_spec = importlib.util.spec_from_loader(module_name, loader)
+                        mod_spec = loader.find_spec(module_name)
+                        # Use full module name as workaround for relative imports
+                        # in top level modules, not required if using walk_package prefix
+                        if not mod_spec.parent:
+                            mod_spec = loader.find_spec(full_module_name)
                         mod = importlib.util.module_from_spec(mod_spec)
+                        if mod.__name__ not in sys.modules:
+                            sys.modules[mod.__name__] = mod  # Add module to current namespace
                         mod_spec.loader.exec_module(mod)
                     except AttributeError:
-                        # For older python version compatibility
+                        # For older python <= 3.4 version compatibility
                         mod = loader.find_module(module_name).load_module(module_name)  # type: ignore
                     module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
                     if not module_md:
@@ -1296,7 +1313,7 @@ def generate_docs(
                     else:
                         to_md_file(
                             module_md,
-                            mod.__name__,
+                            module_name,  # Alt to mod.__name__ to be top level package agnostic
                             out_path=output_path,
                             watermark=watermark,
                             is_mdx=is_mdx,
@@ -1306,21 +1323,32 @@ def generate_docs(
                         f"Failed to generate docs for module {module_name}: " + repr(ex)
                     )
         elif os.path.isfile(path):
+            path = os.path.abspath(path)
             if validate and subprocess.call(f"{pydocstyle_cmd} {path}", shell=True) > 0:
                 raise Exception(f"Validation for {path} failed.")
 
             if not stdout_mode:
                 print(f"Generating docs for python module at: {path}")
 
-            module_name = os.path.basename(path)
+            # Work around for relative imports usage in top level modules
+            # requires adding parent directory to sys path for parent package resolution
+            src_dir, filename = os.path.split(path)
+            parent_dir = os.path.dirname(src_dir)
+            if parent_dir not in sys.path:
+                sys.path.append(parent_dir)
 
-            spec = importlib.util.spec_from_file_location(
-                module_name,
+            module_name, _ = os.path.splitext(filename)
+            full_module_name = f"{os.path.basename(src_dir)}.{module_name}"
+
+            mod_spec = importlib.util.spec_from_file_location(
+                full_module_name,
                 path,
             )
-            assert spec is not None
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)  # type: ignore
+            assert mod_spec is not None
+            mod = importlib.util.module_from_spec(mod_spec)
+            if mod.__name__ not in sys.modules:
+                sys.modules[mod.__name__] = mod  # Add module to current namespace
+            mod_spec.loader.exec_module(mod)  # type: ignore
 
             if mod:
                 module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
@@ -1362,11 +1390,13 @@ def generate_docs(
 
                         try:
                             try:
-                                mod_spec = importlib.util.spec_from_loader(module_name, loader)
+                                mod_spec = loader.find_spec(module_name)
                                 mod = importlib.util.module_from_spec(mod_spec)
+                                if mod.__name__ not in sys.modules:
+                                    sys.modules[mod.__name__] = mod  # Add module to current namespace
                                 mod_spec.loader.exec_module(mod)
                             except AttributeError:
-                                # For older python version compatibility
+                                # For older python <= 3.4 version compatibility
                                 mod = loader.find_module(module_name).load_module(module_name)  # type: ignore
                             module_md = generator.module2md(mod, is_mdx=is_mdx, include_toc=include_toc)
 
