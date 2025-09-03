@@ -1023,9 +1023,11 @@ class MarkdownGenerator(object):
                     continue
                 if hasattr(obj, "__name__") and not obj.__name__.startswith(modname):
                     continue
+                if isinstance(obj, types.ModuleType):
+                    continue
                 comments = inspect.getcomments(obj)
-                comments = ": %s" % comments if comments else ""
-                variables.append("- **%s**%s" % (name, comments))
+                comments = "  \n\t*%s*" % comments if comments else ""
+                variables.append("- **%s** = %s%s" % (name, obj, comments))
                 line_nos.append(_get_line_no(obj) or 0)
 
         variables = _order_by_line_nos(variables, line_nos)
