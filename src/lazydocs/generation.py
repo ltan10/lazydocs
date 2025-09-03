@@ -361,8 +361,15 @@ def _get_src_root_path(obj: Any) -> str:
 
 
 def _get_doc_summary(obj: Any) -> str:
-    # First line should contain the summary
-    return _get_docstring(obj).split("\n")[0]
+    # Summary should continue until blank space
+    summary = []
+    for line in _get_docstring(obj).split("\n"):
+        if line == "" or line is None:
+            break
+        if line.endswith("  "):
+            line = f"{line}\n"
+        summary.append(line.lstrip())
+    return " ".join(summary)
 
 
 def _get_anchor_tag(header: str) -> str:
