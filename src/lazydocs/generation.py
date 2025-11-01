@@ -613,6 +613,11 @@ def _doc2md(obj: Any) -> str:
                 out.append(line.replace("\n",
                                         "\n" + " " * padding))
         elif line:
+            # Assume require force markdown newline if line ends with ":"
+            if line.endswith(":") and \
+                    not any([md_code_snippet, literal_block, doctest_block]):
+                line = line + "  "
+
             padding = max(indent - blockindent + offset, 0)
             out.append(" " * padding
                        + line.replace("\n",
