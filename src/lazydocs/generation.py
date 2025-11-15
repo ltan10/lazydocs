@@ -33,8 +33,29 @@ _RE_ADMONITION_TEXT = re.compile(
     re.IGNORECASE
 )
 
-_RE_TYPED_ARGSTART = re.compile(r"^([\w\[\]_]{1,}?)[ ]*?\((.*?)\):[ ]+(.{2,})", re.IGNORECASE)
-_RE_ARGSTART = re.compile(r"^(.+):[ ]+(.{2,})$", re.IGNORECASE)
+_RE_TYPED_ARGSTART = re.compile(
+    r"""
+    ^  # start of the string
+    (?:
+        # Case 1: Argument with optional type
+        (?P<arg>[a-zA-Z_][a-zA-Z0-9_]*)  # argument name: strict python variable name
+        \s*                              # optional spaces between argument name and type
+        # Optional group for argument type
+        (
+            \(\s*                          # optional space after opening '('
+            (?P<arg_type>[^)]+?)           # type inside parentheses (non-greedy match)
+            \s*\)                          # optional space before closing ')'
+        )?  # make parentheses optional for type
+
+    |   # Case 2: Return and Exception type (no argument name)
+        (?P<alt_name>[a-zA-Z_][\w|\[\].,]+)  # return type, e.g., list[str]|None
+    )
+    :\s+                                 # colon followed by at least one space
+    (?P<arg_desc>.{2,})                  # description (>= 2 chars)
+
+    """,
+    re.IGNORECASE | re.VERBOSE
+)
 
 _RE_CODE_TEXT = re.compile(r"^```[\w\-\.]*[ ]*$", re.IGNORECASE)
 
@@ -582,25 +603,24 @@ def _doc2md(obj: Any) -> str:
                 out.append("\n")
             out.append("**{}**\n".format(line.strip()))
         elif indent > blockindent and (arg_list or section_block):
-            if all([arg_list,
-                   not literal_block,
-                   (indent <= argindent if argindent else indent),
-                   _RE_TYPED_ARGSTART.match(line)]):
+            param_match = _RE_TYPED_ARGSTART.match(line)
+
+            if arg_list and not md_code_snippet and \
+                    (indent <= argindent if argindent else indent) and param_match:
                 # start of new argument
-                out.append(
-                    "- "
-                    + _RE_TYPED_ARGSTART.sub(r"<b>`\1`</b> (\2): \3", line)
-                )
-                argindent = indent
-            elif all([arg_list,
-                     not literal_block,
-                     (indent <= argindent if argindent else indent),
-                     _RE_ARGSTART.match(line)]):
-                # start of an exception-type block
-                out.append(
-                    "- "
-                    + _RE_ARGSTART.sub(r"<b>`\1`</b>: \2", line)
-                )
+                # Extract the matched groups
+                alt_name = param_match.group("alt_name")
+                arg_type = param_match.group("arg_type")
+                desc = param_match.group("arg_desc")
+                # support for exception style and return type
+                arg_name = alt_name if alt_name else param_match.group("arg")
+
+                # output whether arg_type exists
+                if arg_type:
+                    out.append("- <b>`" + arg_name + "`</b> (" + arg_type + "): " +
+                               desc)
+                else:
+                    out.append("- <b>`" + arg_name + "`</b>: " + desc)
                 argindent = indent
             elif indent > argindent:
                 # attach docs text of argument
