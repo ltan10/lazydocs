@@ -14,7 +14,7 @@ from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from pydoc import locate
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Set, Optional, Union
 from urllib.parse import quote
 
 _RE_BLOCKSTART_LIST = re.compile(
@@ -351,19 +351,22 @@ def _is_object_ignored(obj: Any) -> bool:
     return False
 
 
-def _is_module_ignored(module_name: str, ignored_modules: List[str], private_modules: bool = False) -> bool:
+def _is_module_ignored(module_name: str, ignored_modules: Set[str], private_modules: bool = False) -> bool:
     """Checks if a given module is ignored."""
     if module_name.split(".")[-1].startswith("_") and module_name[1] != "_" and not private_modules:
         return True
 
-    for ignored_module in ignored_modules:
-        if module_name == ignored_module:
-            return True
+    # Trivial exact match
+    if module_name in ignored_modules:
+        return True
 
-        # Check is module is subpackage of an ignored package
-        if module_name.startswith(ignored_module + "."):
+    # Check is module is subpackage of an ignored package
+    # Check parent packages from deepest to top level
+    parts = module_name.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        parent = ".".join(parts[:i])
+        if parent in ignored_modules:
             return True
-
     return False
 
 
@@ -1214,7 +1217,7 @@ def generate_docs(
     src_root_path: Optional[str] = None,
     src_base_url: Optional[str] = None,
     remove_package_prefix: bool = False,
-    ignored_modules: Optional[List[str]] = None,
+    ignored_modules: Optional[Union[Set[str],List[str]]] = None,
     output_format: Optional[str] = None,
     overview_file: Optional[str] = None,
     watermark: bool = True,
@@ -1231,7 +1234,7 @@ def generate_docs(
         src_root_path: The root folder name containing all the sources. Fallback to git repo root.
         src_base_url: The base url of the github link. Should include branch name. All source links are generated with this prefix.
         remove_package_prefix: If `True`, the package prefix will be removed from all functions and methods.
-        ignored_modules: A list of modules that should be ignored.
+        ignored_modules: A set of modules that should be ignored.
         output_format: Markdown file extension and format.
         overview_file: Filename of overview file. If not provided, no overview file will be generated.
         watermark: If `True`, add a watermark with a timestamp to bottom of the markdown files.
@@ -1249,7 +1252,9 @@ def generate_docs(
             os.makedirs(output_path)
 
     if not ignored_modules:
-        ignored_modules = list()
+        ignored_modules = set()
+    elif isinstance(ignored_modules, list):
+        ignored_modules = set(ignored_modules)
 
     if output_format and output_format != 'md' and output_format != 'mdx':
         raise Exception(f"Unsupported output format: {output_format}. Choose either 'md' or 'mdx'.")
@@ -1309,7 +1314,7 @@ def generate_docs(
             for loader, module_name, is_pkg in pkgutil.walk_packages([path_abs]):
                 if _is_module_ignored(module_name, ignored_modules, private_modules):
                     # Add module to ignore list, so submodule will also be ignored
-                    ignored_modules.append(module_name)
+                    ignored_modules.add(module_name)
                     continue
 
                 try:
@@ -1341,7 +1346,7 @@ def generate_docs(
                     if not module_md:
                         # Module md is empty -> ignore module and all submodules
                         # Add module to ignore list, so submodule will also be ignored
-                        ignored_modules.append(module_name)
+                        ignored_modules.add(module_name)
                         continue
 
                     if stdout_mode:
@@ -1440,7 +1445,7 @@ def generate_docs(
                             if not module_md:
                                 # Module MD is empty -> ignore module and all submodules
                                 # Add module to ignore list, so submodule will also be ignored
-                                ignored_modules.append(module_name)
+                                ignored_modules.add(module_name)
                                 continue
 
                             if stdout_mode:
