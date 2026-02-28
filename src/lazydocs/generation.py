@@ -1311,58 +1311,66 @@ def generate_docs(
                 sys.modules[parent_package] = mod  # Add module to current namespace
 
             # Generate one file for every discovered module
-            for loader, module_name, is_pkg in pkgutil.walk_packages([path_abs]):
-                if _is_module_ignored(module_name, ignored_modules, private_modules):
-                    # Add module to ignore list, so submodule will also be ignored
-                    ignored_modules.add(module_name)
-                    continue
+            for root, _, files in os.walk(path_abs):
+                for filename in files:
+                    if not filename.endswith(".py"):
+                        continue
+                    is_pkg = filename == "__init__.py"
+                    file_path = os.path.join(root, filename)
 
-                try:
-                    # Modern PEP 451 path
-                    try:
-                        mod_spec = loader.find_spec(module_name)
-                    except AttributeError:
-                        # Fallback if Loader object has no attribute `find_spec`
-                        module_filepath = os.path.join(
-                            path_abs, *module_name.split(".")) + ".py"
-                        mod_spec = importlib.util.spec_from_file_location(
-                            module_name,
-                            os.path.join(loader.path, module_filepath)
-                        )
-                    if mod_spec is None or mod_spec.loader is None:
-                        raise ImportError(f"Cannot load module {module_name} from {path}")
-                    mod = importlib.util.module_from_spec(mod_spec)
-                    full_module_name = f"{parent_package}.{module_name}"
-                    mod.__package__ = (module_name if is_pkg
-                                       else full_module_name).rsplit(".", 1)[0]
-                    # Add module to current namespace
-                    if mod.__name__ not in sys.modules:
-                        sys.modules[mod.__name__] = mod
-                    mod_spec.loader.exec_module(mod)
+                    # Dotted module name relative to base folder
+                    rel_path = os.path.relpath(file_path, path_abs)
+                    if is_pkg:
+                        module_name = os.path.split(rel_path)[0].replace(os.sep, ".")
+                        if not module_name:
+                            # Is top-level package
+                            module_name = os.path.basename(root)
+                    else:
+                        module_name = os.path.splitext(rel_path)[0].replace(os.sep, ".")
 
-                    module_md = generator.module2md(module=mod,
-                                                    is_mdx=is_mdx,
-                                                    include_toc=include_toc)
-                    if not module_md:
-                        # Module md is empty -> ignore module and all submodules
+                    if _is_module_ignored(module_name, ignored_modules, private_modules):
                         # Add module to ignore list, so submodule will also be ignored
                         ignored_modules.add(module_name)
                         continue
 
-                    if stdout_mode:
-                        print(module_md)
-                    else:
-                        to_md_file(
-                            markdown_str=module_md,
-                            filename=mod.__name__,
-                            out_path=output_path,
-                            watermark=watermark,
-                            is_mdx=is_mdx,
+                    try:
+                        # Modern PEP 451 path
+                        mod_spec = importlib.util.spec_from_file_location(module_name,
+                                                                          file_path)
+                        if mod_spec is None or mod_spec.loader is None:
+                            raise ImportError(f"Cannot load module {module_name} from {path}")
+                        mod = importlib.util.module_from_spec(mod_spec)
+                        full_module_name = f"{parent_package}.{module_name}"
+                        mod.__package__ = (module_name if is_pkg
+                                        else full_module_name).rsplit(".", 1)[0]
+                        # Add module to current namespace
+                        if mod.__name__ not in sys.modules:
+                            sys.modules[mod.__name__] = mod
+                        mod_spec.loader.exec_module(mod)
+
+                        module_md = generator.module2md(module=mod,
+                                                        is_mdx=is_mdx,
+                                                        include_toc=include_toc)
+                        if not module_md:
+                            # Module md is empty -> ignore module and all submodules
+                            # Add module to ignore list, so submodule will also be ignored
+                            ignored_modules.add(module_name)
+                            continue
+
+                        if stdout_mode:
+                            print(module_md)
+                        else:
+                            to_md_file(
+                                markdown_str=module_md,
+                                filename=mod.__name__,
+                                out_path=output_path,
+                                watermark=watermark,
+                                is_mdx=is_mdx,
+                            )
+                    except Exception as ex:
+                        print(
+                            f"Failed to generate docs for module {module_name}: " + repr(ex)
                         )
-                except Exception as ex:
-                    print(
-                        f"Failed to generate docs for module {module_name}: " + repr(ex)
-                    )
         elif os.path.isfile(path):
             if validate and subprocess.call(f"{pydocstyle_cmd} {path}", shell=True) > 0:
                 raise Exception(f"Validation for {path} failed.")
