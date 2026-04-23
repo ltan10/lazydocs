@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List, Set, Optional, Union
 from urllib.parse import quote
 
 _RE_BLOCKSTART_LIST = re.compile(
-    r"^(Args:|Arg:|Arguments:|Parameters:|Kwargs:|Attributes:|Returns:|Yields:|Kwargs:|Raises:).{0,2}$",
+    r"^((?:Arg[s]?|Arguments|Parameters|Kwargs|Attributes|Returns|Yields|Raises|Methods):).{0,2}$",
     re.IGNORECASE,
 )
 
@@ -49,7 +49,21 @@ _RE_TYPED_ARGSTART = re.compile(
         )?  # make parentheses optional for type
 
     |   # Case 2: Return and Exception type (no argument name)
-        (?P<alt_name>[a-zA-Z_][\w|\[\].,]+)  # return type, e.g., list[str]|None
+        (?![Oo]r\s+|\|\s*)                  # Prevents starting with 'or' or '|'
+        (?P<alt_name>                       # Named capture group 'alt_name'
+            (?:
+                (?:\s+[Oo]r\s+|\s*\|\s*)?   # Optional separator: ' or ' or '|'
+                (?![Oo]r|\|)                # Prevent consecutive 'or' or '|'
+                [a-zA-Z_][\w.]+             # type_token, support lead _ and `.`
+                # Optional group for square bracket typed i.e list[dict[str, int]]
+                (?:
+                    # No padding to square bracket conents
+                    \[\b
+                    [\w\|,.\[\]\ \t]*       # support empty and nested, greedy match
+                    \b\]
+                )?
+            )+                              # One or more tokens
+        )
     )
     :\s+                                 # colon followed by at least one space
     (?P<arg_desc>.{2,})                  # description (>= 2 chars)
