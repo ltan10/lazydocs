@@ -448,6 +448,11 @@ def _doc2md(obj: Any) -> str:
     # doc = getdoc(func) or ""
     doc = _get_docstring(obj)
 
+    # TODO: Clean up and tidy docstring parsing and output formatting logic
+    # BUG: doctest rendering in blockquotes not closing correctly
+    if not doc:
+        return ""
+
     padding = 0
     blockindent = 0
     argindent = 0
