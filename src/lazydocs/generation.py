@@ -93,8 +93,12 @@ _MDX_SOURCE_BADGE_TEMPLATE = """
 <a href="{path}"><img align="right" style={{{{"float":"right"}}}} src="https://img.shields.io/badge/-source-cccccc?style=flat-square" /></a>
 """
 
-_SEPARATOR = """
----
+_SEPARATOR_MAJOR = """
+<hr style="height: 6px; border: none; background-color: currentColor;">
+"""
+
+_SEPARATOR_MINOR = """
+<hr style="height: 2px; border: none; background-color: currentColor;">
 """
 
 _FUNC_TEMPLATE = """
@@ -935,7 +939,7 @@ class MarkdownGenerator(object):
                     comments = _doc2md(obj) or inspect.getcomments(obj)
                     comments = "\n\n%s" % comments if comments else ""
                     variables.append(
-                        _SEPARATOR
+                        _SEPARATOR_MINOR
                         + "\n%s <kbd>property</kbd> %s%s\n"
                         % (subsection, full_name, comments)
                     )
@@ -969,7 +973,7 @@ class MarkdownGenerator(object):
                     handler_name = name
 
                 handlers.append(
-                    _SEPARATOR
+                    _SEPARATOR_MINOR
                     + "\n%s <kbd>handler</kbd> %s\n" % (subsection, handler_name)
                 )
 
@@ -987,7 +991,7 @@ class MarkdownGenerator(object):
             ):
                 function_md = self.func2md(obj, clsname=clsname, depth=depth + 1, is_mdx=is_mdx)
                 if function_md:
-                    methods.append(_SEPARATOR + function_md)
+                    methods.append(_SEPARATOR_MINOR + function_md)
 
         markdown = _CLASS_TEMPLATE.format(
             section=section,
@@ -1053,7 +1057,7 @@ class MarkdownGenerator(object):
             ):
                 class_markdown = self.class2md(obj, depth=depth + 1, is_mdx=is_mdx)
                 if class_markdown:
-                    classes.append(_SEPARATOR + class_markdown)
+                    classes.append(_SEPARATOR_MAJOR + class_markdown)
                     line_nos.append(_get_line_no(obj) or 0)
         classes = _order_by_line_nos(classes, line_nos)
 
@@ -1069,7 +1073,7 @@ class MarkdownGenerator(object):
             ):
                 function_md = self.func2md(obj, depth=depth + 1, is_mdx=is_mdx)
                 if function_md:
-                    functions.append(_SEPARATOR + function_md)
+                    functions.append(_SEPARATOR_MINOR + function_md)
                     line_nos.append(_get_line_no(obj) or 0)
         functions = _order_by_line_nos(functions, line_nos)
 
