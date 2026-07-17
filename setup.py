@@ -45,7 +45,7 @@ setup(
     package_dir={"": "src"},
     py_modules=[splitext(basename(path))[0] for path in glob("src/*.py")],
     zip_safe=False,
-    install_requires=["typer"],
+    install_requires=["typer", "regex"],
     # deprecated: dependency_links=dependency_links,
     extras_require={
         # extras can be installed via: pip install package[dev]

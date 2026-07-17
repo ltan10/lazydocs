@@ -6,7 +6,6 @@ import importlib.util
 import inspect
 import os
 import pkgutil
-import re
 import subprocess
 import sys
 import types
@@ -14,27 +13,29 @@ from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from pydoc import locate
 from types import ModuleType
-from typing import Any, Callable, Dict, List, Set, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Union
 from urllib.parse import quote
 
-_RE_BLOCKSTART_LIST = re.compile(
+import regex
+
+_RE_BLOCKSTART_LIST = regex.compile(
     r"^((?:Arg[s]?|Arguments|Parameters|Kwargs|Attributes|Returns|Yields|Raises|Methods):).{0,2}$",
-    re.IGNORECASE,
+    regex.IGNORECASE,
 )
 
-_RE_BLOCKSTART_TEXT = re.compile(
+_RE_BLOCKSTART_TEXT = regex.compile(
     r"^(Example[s]?:|Todo:|Reference[s]?:).{0,2}$",
-    re.IGNORECASE
+    regex.IGNORECASE
 )
 
 # https://github.com/orgs/community/discussions/16925
 # https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
-_RE_ADMONITION_TEXT = re.compile(
+_RE_ADMONITION_TEXT = regex.compile(
     r"^(?:\[\!?)?(NOTE|TIP|IMPORTANT|WARNING|CAUTION)s?[\]:][^:]?[ ]*(.*)$",
-    re.IGNORECASE
+    regex.IGNORECASE
 )
 
-_RE_TYPED_ARGSTART = re.compile(
+_RE_TYPED_ARGSTART = regex.compile(
     r"""
     ^  # start of the string
     (?:
@@ -58,21 +59,27 @@ _RE_TYPED_ARGSTART = re.compile(
                 # Optional group for square bracket typed i.e list[dict[str, int]]
                 (?:
                     # No padding to square bracket conents
-                    \[\b
-                    [\w\|,.\[\]\ \t]*       # support empty and nested, greedy match
-                    \b\]
+                    \[
+                    # support nested square brackets
+                    (?:
+                        (?&alt_name)
+                        (?:\s*,\s*(?&alt_name))*
+                        |
+                        [\w|,.\ \t]+
+                    )
+                    \]
                 )?
             )+                              # One or more tokens
         )
     )
     :\s+                                 # colon followed by at least one space
-    (?P<arg_desc>.{2,})                  # description (>= 2 chars)
+    (?P<arg_desc>.{2,}| $)               # description (>= 2 chars) or ends with 2 space
 
     """,
-    re.IGNORECASE | re.VERBOSE
+    regex.IGNORECASE | regex.VERBOSE
 )
 
-_RE_CODE_TEXT = re.compile(r"^```[\w\-\.]*[ ]*$", re.IGNORECASE)
+_RE_CODE_TEXT = regex.compile(r"^```[\w\-\.]*[ ]*$", regex.IGNORECASE)
 
 _IGNORE_GENERATION_INSTRUCTION = "lazydocs: ignore"
 
@@ -211,7 +218,7 @@ def _get_function_signature(
             return_type = return_type.replace("typing.", "")
             if remove_package:
                 # Remove all package path return type
-                return_type = re.sub(r"([a-zA-Z0-9_]*?\.)", "", return_type)
+                return_type = regex.sub(r"([a-zA-Z0-9_]*?\.)", "", return_type)
 
         for parameter in parameters:
             argument = str(parameters[parameter])
@@ -219,17 +226,17 @@ def _get_function_signature(
                 # Ignore self
                 continue
             # Reintroduce Optionals
-            argument = re.sub(r"Union\[(.*?), NoneType\]", r"Optional[\1]", argument)
+            argument = regex.sub(r"Union\[(.*?), NoneType\]", r"Optional[\1]", argument)
 
             # Remove package
             if remove_package:
                 # Remove all package path from parameter signature
                 if "=" not in argument:
-                    argument = re.sub(r"([a-zA-Z0-9_]*?\.)", "", argument)
+                    argument = regex.sub(r"([a-zA-Z0-9_]*?\.)", "", argument)
                 else:
                     # Remove only from part before the first =
                     argument_split = argument.split("=")
-                    argument_split[0] = re.sub(
+                    argument_split[0] = regex.sub(
                         r"([a-zA-Z0-9_]*?\.)", "", argument_split[0]
                     )
                     argument = "=".join(argument_split)
@@ -415,9 +422,9 @@ def _get_doc_summary(obj: Any) -> str:
 def _get_anchor_tag(header: str) -> str:
     anchor_tag = header.strip().lower()
     # Whitespaces to -
-    anchor_tag = re.compile(r"\s").sub("-", anchor_tag)
+    anchor_tag = regex.compile(r"\s").sub("-", anchor_tag)
     # Remove not allowed characters
-    anchor_tag = re.compile(r"[^a-zA-Z0-9-_]").sub("", anchor_tag)
+    anchor_tag = regex.compile(r"[^a-zA-Z0-9-_]").sub("", anchor_tag)
     return anchor_tag
 
 
