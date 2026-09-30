@@ -18,19 +18,19 @@ from typing import Any, Callable, Dict, List, Set, Optional, Union
 from urllib.parse import quote
 
 _RE_BLOCKSTART_LIST = re.compile(
-    r"^((?:Arg[s]?|Arguments|Parameters|Kwargs|Attributes|Returns|Yields|Raises|Methods):).{0,2}$",
+    r"^(?:Arg|Argument|Parameter|Kwarg|Attribute|Return|Yield|Raise|Method|Warn(?:ing)?)s:\s{0,2}$",
     re.IGNORECASE,
 )
 
 _RE_BLOCKSTART_TEXT = re.compile(
-    r"^(Example[s]?:|Todo:|Reference[s]?:).{0,2}$",
+    r"^(?:Example[s]?|Todo|Reference[s]?|Notes|References|See Also):\s{0,2}$",
     re.IGNORECASE
 )
 
 # https://github.com/orgs/community/discussions/16925
 # https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts
 _RE_ADMONITION_TEXT = re.compile(
-    r"^(?:\[\!?)?(NOTE|TIP|IMPORTANT|WARNING|CAUTION)s?[\]:][^:]?[ ]*(.*)$",
+    r"^(?:\[\!?)?(NOTE|TIP|IMPORTANT|WARNING|CAUTION)[\]:][^:]?[ ]*(.*)$",
     re.IGNORECASE
 )
 
