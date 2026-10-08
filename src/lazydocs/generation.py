@@ -447,7 +447,12 @@ def _doc2md(obj: Any) -> str:
     # the documentation strings are now inherited if not overridden.
     # For details see: https://docs.python.org/3.6/library/inspect.html#inspect.getdoc
     # doc = getdoc(func) or ""
+    # TODO: Clean up and tidy docstring parsing and output formatting logic
     doc = _get_docstring(obj)
+
+    # Early escape for no available docstring
+    if not doc:
+        return ""
 
     padding = 0
     blockindent = 0
@@ -659,6 +664,8 @@ def _doc2md(obj: Any) -> str:
                 out.append(" " * padding
                            + line.replace("\n",
                                           "\n" + " " * padding))
+            elif md_code_snippet:
+                out.append(line)
             else:
                 padding = max(indent - blockindent + offset, 0)
                 out.append(line.replace("\n",
