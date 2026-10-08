@@ -9,6 +9,7 @@ import pkgutil
 import subprocess
 import sys
 import types
+import typing
 from dataclasses import dataclass, is_dataclass
 from enum import Enum
 from pydoc import locate
@@ -1080,7 +1081,11 @@ class MarkdownGenerator(object):
         variables: List[str] = []
         line_nos = []
         for name, obj in module.__dict__.items():
-            if not name.startswith("_") and name not in found:
+            if name.startswith("_"):
+                continue
+            if obj is typing.TYPE_CHECKING:
+                continue
+            if name not in found:
                 if hasattr(obj, "__module__") and obj.__module__ != modname:
                     continue
                 if hasattr(obj, "__name__") and not obj.__name__.startswith(modname):
