@@ -41,7 +41,7 @@ _RE_TYPED_ARGSTART = regex.compile(
     ^  # start of the string
     (?:
         # Case 1: Argument with optional type
-        (?P<arg>[a-zA-Z_][a-zA-Z0-9_]*)  # argument name: strict python variable name
+        (?P<arg>(\*\*|\*)?[a-zA-Z_][a-zA-Z0-9_]*)  # argument name: strict python variable name
         \s*                              # optional spaces between argument name and type
         # Optional group for argument type
         (
