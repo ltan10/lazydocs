@@ -1,5 +1,6 @@
 """Main module for markdown generation."""
 
+import dataclasses
 import datetime
 import importlib
 import importlib.util
@@ -9,6 +10,7 @@ import pkgutil
 import subprocess
 import sys
 import types
+import textwrap
 import typing
 from dataclasses import dataclass, is_dataclass
 from enum import Enum
@@ -121,8 +123,8 @@ _TOC_TEMPLATE = """
 _CLASS_TEMPLATE = """
 {section} <kbd>{kind}</kbd> `{header}`
 {doc}
-{init}
 {variables}
+{init}
 {handlers}
 {methods}
 """
@@ -167,7 +169,7 @@ def _get_function_signature(
     function: Callable,
     owner_class: Any = None,
     show_module: bool = False,
-    ignore_self: bool = False,
+    ignore_receiver: bool = False,
     wrap_arguments: bool = False,
     remove_package: bool = False,
 ) -> str:
@@ -177,13 +179,16 @@ def _get_function_signature(
         function: Selected function (or method) to generate the signature string.
         owner_class: Owner class of this function.
         show_module: If `True`, add module path in function signature.
-        ignore_self: If `True`, ignore self argument in function signature.
+        ignore_self: If `True`, ignore the receiver argument (`self` or `cls`) in the function signature.
         wrap_arguments:  If `True`, wrap all arguments to new lines.
         remove_package:  If `True`, the package path will be removed from the function signature.
 
     Returns:
         str: Signature of selected function.
     """
+    # Safely unwrap decorator wrappers if a descriptor object is passed directly
+    function = getattr(function, "__func__", function)
+    
     isclass = inspect.isclass(function)
 
     # Get base name.
@@ -225,11 +230,13 @@ def _get_function_signature(
                 # Remove all package path return type
                 return_type = regex.sub(r"([a-zA-Z0-9_]*?\.)", "", return_type)
 
-        for parameter in parameters:
-            argument = str(parameters[parameter])
-            if ignore_self and argument == "self":
-                # Ignore self
+        for parameter_name in parameters:
+            if ignore_receiver and parameter_name in ("self", "cls"):
+                # Ignore self or cls
                 continue
+
+            argument = str(parameters[parameter_name])
+
             # Reintroduce Optionals
             argument = regex.sub(r"Union\[(.*?), NoneType\]", r"Optional[\1]", argument)
 
@@ -366,6 +373,36 @@ def _get_class_that_defined_method(meth: Any) -> Any:
 def _get_docstring(obj: Any) -> str:
     return "" if obj.__doc__ is None else inspect.getdoc(obj) or ""
 
+
+def _get_field_docstrings(cls):
+    """Scans class source lines to map field names to their inline docstrings."""
+    try:
+        source = inspect.getsource(cls)
+    except (TypeError, OSError):
+        return {}
+
+    source = textwrap.dedent(source)
+    lines = source.splitlines()
+    field_docs = {}
+
+    for i in range(len(lines) - 1):
+        line = lines[i].strip()
+        # Match field definition (e.g., `username: str` or `DEFAULT_TIMEOUT: int = 300`)
+        match = regex.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*(?::|=)', line)
+        if match:
+            field_name = match.group(1)
+            next_line = lines[i + 1].strip()
+
+            # Check if the next line is a string literal (docstring)
+            if (next_line.startswith('"""') and next_line.endswith('"""')) or \
+               (next_line.startswith("'''") and next_line.endswith("'''")) or \
+               (next_line.startswith('"') and next_line.endswith('"')) or \
+               (next_line.startswith("'") and next_line.endswith("'")):
+                doc = next_line[3:-
+                                3] if next_line.startswith(('"""', "'''")) else next_line[1:-1]
+                field_docs[field_name] = doc.strip()
+
+    return field_docs
 
 def _is_object_ignored(obj: Any) -> bool:
     if (
@@ -796,50 +833,63 @@ class MarkdownGenerator(object):
             # The function is ignored from generation
             return ""
 
+        # 1. Intercept decorator wrappers BEFORE accessing attributes or signatures
+        is_classmethod = isinstance(func, classmethod)
+        is_staticmethod = isinstance(func, staticmethod)
+
+        # 2. Unwrap the real callable function object so it can be safely inspected
+        unwrapped_func = getattr(func, "__func__", func)
+
         section = "#" * depth
-        funcname = func.__name__
+        funcname = unwrapped_func.__name__
         modname = None
-        if hasattr(func, "__module__"):
-            modname = func.__module__
+        if hasattr(unwrapped_func, "__module__"):
+            modname = unwrapped_func.__module__
 
         escfuncname = (
             "%s" % funcname if funcname.startswith("_") else funcname
         )  # "`%s`"
 
         full_name = "%s%s" % ("%s." % clsname if clsname else "", escfuncname)
-        header = full_name
 
         if self.remove_package_prefix:
             # TODO: Evaluate
             # Only use the name
             header = escfuncname
+        else:
+            header = full_name
 
-        path = self._get_src_path(func)
-        doc = _doc2md(func)
-        summary = _get_doc_summary(func)
+        path = self._get_src_path(unwrapped_func)
+        doc = _doc2md(unwrapped_func)
+        summary = _get_doc_summary(unwrapped_func)
 
-        funcdef = _get_function_signature(
-            func, ignore_self=True, remove_package=self.remove_package_prefix
-        )
-
-        # split the function definition if it is too long
-        lmax = 80
-        if len(funcdef) > lmax:
-            funcdef = _get_function_signature(
-                func,
-                ignore_self=True,
-                wrap_arguments=True,
-                remove_package=self.remove_package_prefix,
-            )
-
-        if inspect.ismethod(func):
+        # 3. Determine function type
+        if is_classmethod or inspect.ismethod(func):
             func_type = "classmethod"
+        elif is_staticmethod:
+            func_type = "staticmethod"
         else:
             if _get_class_that_defined_method(func) is None:
                 func_type = "function"
             else:
                 # function of a class
                 func_type = "constructor" if escfuncname == "__init__" else "method"
+
+        funcdef = _get_function_signature(
+            unwrapped_func,
+            ignore_receiver=True,
+            remove_package=self.remove_package_prefix
+        )
+
+        # split the function definition if it is too long
+        lmax = 80
+        if len(funcdef) > lmax:
+            funcdef = _get_function_signature(
+                unwrapped_func,
+                ignore_receiver=True,
+                wrap_arguments=True,
+                remove_package=self.remove_package_prefix,
+            )
 
         self.generated_objects.append(
             {
@@ -893,7 +943,12 @@ class MarkdownGenerator(object):
         path = self._get_src_path(cls)
         doc = _doc2md(cls)
         summary = _get_doc_summary(cls)
+
+        annotations = getattr(cls, "__annotations__", {})
         variables = []
+        attributes_to_render = []
+        # Pull inline docstrings for fields/annotations using your regex helper
+        field_docs = _get_field_docstrings(cls)
 
         # Handle different kinds of classes
         if issubclass(cls, Enum):
@@ -902,15 +957,85 @@ class MarkdownGenerator(object):
                 kind = "enum[%s]" % (kind)
             else:
                 kind = kind.lower()
-            variables.append(
-                "%s <kbd>symbols</kbd>\n" % (sectionheader)
-            )
+
+            for name, member in cls.__members__.items():
+                attributes_to_render.append({
+                    "name": name,
+                    "type": None,
+                    "value": repr(member.value),
+                    "doc": field_docs.get(name),
+                    "is_bold": True,
+                })
+
         elif is_dataclass(cls):
             kind = "dataclass"
-        elif issubclass(cls, Exception):
-            kind = "exception"
+
+            # Filter out auto-generated signature docstrings and summary (e.g., "ClassName(arg1, arg2...)")
+            if doc:
+                cleaned_doc = doc.strip()
+                if (
+                    cleaned_doc.startswith(f"{clsname}(")
+                    and cleaned_doc.endswith(")")
+                    and "\n" not in cleaned_doc
+                ):
+                    doc = ""
+                    summary = ""
+
+            # Extract dataclass fields directly from __dataclass_fields__
+            for name, field in getattr(cls, "__dataclass_fields__", {}).items():
+                if name.startswith("_"):
+                    continue
+                type_name = getattr(field.type, "__name__", str(field.type))
+                val = None
+                if field.default is not dataclasses.MISSING:
+                    val = repr(field.default)
+                elif field.default_factory is not dataclasses.MISSING:
+                    val = "default_factory"
+
+                attributes_to_render.append({
+                    "name": name,
+                    "type": type_name,
+                    "value": val,
+                    "doc": field_docs.get(name),
+                    "is_bold": True,
+                })
+
         else:
-            kind = "class"
+            if issubclass(cls, Exception):
+                kind = "exception"
+            else:
+                kind = "class"
+
+            # 1. Collect standard class-level annotations
+            for name, ann_type in annotations.items():
+                if name.startswith("_"):
+                    continue
+                type_name = getattr(ann_type, "__name__", str(ann_type))
+                val = repr(getattr(cls, name)) if hasattr(cls, name) else None
+
+                attributes_to_render.append({
+                    "name": name,
+                    "type": type_name,
+                    "value": val,
+                    "doc": field_docs.get(name),
+                    "is_bold": True,
+                })
+
+            # 2. Collect instance variables from __init__ annotations (No AST!)
+            init_method = getattr(cls, "__init__", None)
+            if init_method:
+                init_annotations = getattr(init_method, "__annotations__", {})
+                for name, ann_type in init_annotations.items():
+                    # Skip 'return' type annotation and private or already documented attributes
+                    if name == "return" or name.startswith("_") or name in annotations:
+                        continue
+                    
+                    type_name = getattr(ann_type, "__name__", str(ann_type))
+                    attributes_to_render.append({
+                        "name": name,
+                        "type": type_name,
+                        "value": None
+                    })
 
         self.generated_objects.append(
             {
@@ -936,70 +1061,83 @@ class MarkdownGenerator(object):
             # this happens if __init__ is outside the repo
             init = ""
 
-        for name, obj in inspect.getmembers(
-            cls, lambda a: not (inspect.isroutine(a) or inspect.ismethod(a))
-        ):
-            if not name.startswith("_"):
-                full_name = f"{clsname}.{name}"
-                if self.remove_package_prefix:
-                    full_name = name
-                if isinstance(obj, property):
-                    comments = _doc2md(obj) or inspect.getcomments(obj)
-                    comments = "\n\n%s" % comments if comments else ""
-                    variables.append(
-                        _SEPARATOR_MINOR
-                        + "\n%s <kbd>property</kbd> %s%s\n"
-                        % (subsection, full_name, comments)
-                    )
-                elif isinstance(obj, Enum):
-                    variables.append(
-                        "- **%s** = %s\n" % (full_name, obj.value)
-                    )
-            elif name == "__dataclass_fields__" and obj:
-                variables.append(
-                    "%s <kbd>fields</kbd>\n" % (sectionheader)
-                )
-                for name, field in sorted((obj).items()):
-                    full_name = f"{clsname}.{name}"
-                    if self.remove_package_prefix:
-                        full_name = name
-                    variables.append(
-                        "- ```%s``` (%s)\n" % (full_name,
-                                               field.type.__name__)
-                    )
+        # Unified render loop for upfront variables
+        for attr in attributes_to_render:
+            full_name = attr["name"] if self.remove_package_prefix else f"{clsname}.{attr['name']}"
+            t_name = f" ({attr['type']})" if attr["type"] else ""
+            val_str = f" = {attr['value']}" if attr["value"] is not None else ""
+            doc_str = f" — {attr['doc']}" if attr.get("doc") else ""
 
+            variables.append(f"- **{full_name}**{t_name}{val_str}{doc_str}\n")
+
+        class_attributes = inspect.classify_class_attrs(cls)
         handlers = []
-        for name, obj in inspect.getmembers(cls, inspect.ismethoddescriptor):
-            if (
-                not name.startswith("_")
-                and hasattr(obj, "__module__")
-                # object module should be the same as the calling module
-                and obj.__module__ == modname
-            ):
-                handler_name = f"{clsname}.{name}"
-                if self.remove_package_prefix:
-                    handler_name = name
+        methods = []
 
-                handlers.append(
+        for attr in class_attributes:
+            name = attr.name
+            obj = attr.object
+            attr_kind = attr.kind
+
+            if name.startswith("_"):
+                continue  # Skip all other private/internal attributes
+
+            # Skip enum members here since they are already fully handled upfront via __members__
+            if issubclass(cls, Enum):
+                continue
+
+            # Common naming variables used across all blocks
+            if self.remove_package_prefix:
+                full_name = name
+            else:
+                full_name = f"{clsname}.{name}"
+
+            # --- ROUTING BLOCK: PROPERTIES & DATA ---
+            if attr_kind == "property" or isinstance(obj, property):
+                comments = _doc2md(obj) or inspect.getcomments(obj)
+                comments = "\n\n%s" % comments if comments else ""
+                variables.append(
                     _SEPARATOR_MINOR
-                    + "\n%s <kbd>handler</kbd> %s\n" % (subsection, handler_name)
+                    + "\n%s <kbd>property</kbd> %s%s\n"
+                    % (sectionheader, full_name, comments)
                 )
 
-        methods = []
-        # for name, obj in getmembers(cls, inspect.isfunction):
-        for name, obj in inspect.getmembers(
-            cls, lambda a: inspect.ismethod(a) or inspect.isfunction(a)
-        ):
-            if (
-                not name.startswith("_")
-                and hasattr(obj, "__module__")
-                and name not in handlers
-                # object module should be the same as the calling module
-                and obj.__module__ == modname
-            ):
-                function_md = self.func2md(obj, clsname=clsname, depth=depth + 1, is_mdx=is_mdx)
-                if function_md:
-                    methods.append(_SEPARATOR_MINOR + function_md)
+            elif attr_kind == "data":
+                if name in annotations or issubclass(cls, Exception) or name == "__dataclass_fields__":
+                    continue
+                val_representation = getattr(obj, "value", obj)
+                doc_str = f" — {field_docs.get(name)}" if field_docs.get(name) else ""
+                variables.append(
+                    "- **%s** = %s%s\n" % (
+                        full_name,
+                        repr(val_representation),
+                        doc_str
+                    )
+                )
+
+            # --- ROUTING BLOCK: HANDLERS & METHODS ---
+            elif attr_kind in ("method", "class method", "static method"):
+                if hasattr(obj, "__module__") and obj.__module__ == modname:
+
+                    # 1. Safely unwrap classmethod/staticmethod decorators to get the callable function
+                    underlying_func = getattr(obj, "__func__", obj)
+
+                    # 2. Distinguish True 'handlers' (No __code__ block available anywhere) vs 'standard methods'
+                    if inspect.ismethoddescriptor(obj) and not hasattr(underlying_func, "__code__"):
+                        handlers.append(
+                            _SEPARATOR_MINOR
+                            + "\n%s <kbd>handler</kbd> %s\n" % (subsection, full_name)
+                        )
+                    else:
+                        # Pass raw function object to func2md
+                        function_md = self.func2md(
+                            obj,
+                            clsname=clsname,
+                            depth=depth + 1,
+                            is_mdx=is_mdx
+                        )
+                        if function_md:
+                            methods.append(_SEPARATOR_MINOR + function_md)
 
         markdown = _CLASS_TEMPLATE.format(
             section=section,
